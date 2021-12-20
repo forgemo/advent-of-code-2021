@@ -61,6 +61,11 @@ path = "src/day_13.rs"
 name = "day14"
 path = "src/day_14.rs"
 
+[[bin]]
+name = "day15"
+path = "src/day_15.rs"
+
 [dependencies]
 itertools = "0.10"
 rayon = "1.5"
+pathfinding = "3.0.5"
