@@ -85,7 +85,16 @@ path = "src/day_19.rs"
 name = "day20"
 path = "src/day_20.rs"
 
+[[bin]]
+name = "day21"
+path = "src/day_21.rs"
+
+[[bin]]
+name = "day22"
+path = "src/day_22.rs"
+
 [dependencies]
 itertools = "0.10"
 rayon = "1.5"
 pathfinding = "3.0.5"
+regex = "1.5.4"
