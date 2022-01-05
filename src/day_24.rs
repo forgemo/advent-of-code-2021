@@ -9,12 +9,12 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 use itertools::{Itertools};
-use pathfinding::prelude::bfs;
+use pathfinding::prelude::{astar, bfs};
 use rayon::iter::plumbing::{Consumer, ProducerCallback, UnindexedConsumer};
 use rayon::prelude::{ParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
 use regex::Regex;
 use crate::Instruction::*;
-use crate::lib::read_lines;
+use crate::lib::{read_lines, read_usize_vec};
 use crate::Value::Number;
 
 mod lib;
@@ -32,52 +32,10 @@ fn main() {
 
 
 fn task_a(lines: impl Iterator<Item=String>) -> usize {
-    let instructions = parse_input(lines);
-    let mut progress = 0.;
-    let start = Instant::now();
+    let result = find_star();
+    println!("{:?}", result);
 
-    let range = (
-        25000000000000usize,
-        50000000000000usize
-    );
-
-    let count = range.1-range.0;
-
-    let counter = Arc::new(AtomicUsize::new(0usize));
-    let mut cache = HashMap::new();
-
-    let max = (range.0 .. range.1+1)
-        //.into_par_iter()
-        .enumerate()
-        .inspect(|(i, _)| {
-            if i % 100000000 == 0 {
-                let counter = {
-                    let counter = counter.clone();
-                    counter.fetch_add(100000000, Ordering::Relaxed);
-                    counter.load(Ordering::Relaxed)
-                };
-                let progress = counter as f64 / count as f64 * 100.;
-                let now = Instant::now();
-                let passed = now.duration_since(start);
-                println!("{}% after {:?}", progress, passed);
-                println!("{:?}days to go ", (passed.as_secs_f64()/60./60./24.) * (100./progress));
-            }
-        })
-        .map(|(_, j)| j.to_string().chars().map(|c| c.to_digit(10).unwrap() as isize).collect_vec())
-        .map(|n|(calc(&n, &mut cache), n))
-        .filter(|(z, n)| {
-            if z == &0 {
-                println!("found {} with {:?}", &z, n);
-                true
-            } else {
-                false
-            }
-        })
-        .map(|(_, n)| n.iter().join("").parse::<usize>().unwrap())
-        .max().unwrap();
-
-    println!("max: {}", max);
-    max
+    todo!()
 }
 
 fn task_b(lines: impl Iterator<Item=String>) -> isize {
@@ -98,7 +56,7 @@ fn parse_input(lines: impl Iterator<Item=String>) -> Vec<Instruction> {
             _ => panic!("unexpected instruction {}", parts[0])
         }
     })
-    .collect_vec()
+        .collect_vec()
 }
 
 fn parse_var(p: &str) -> Pointer {
@@ -121,13 +79,13 @@ fn parse_value(p: &str) -> Value {
 #[derive(Clone, Debug)]
 enum Value {
     Number(isize),
-    Var(Pointer)
+    Var(Pointer),
 }
 
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Number(n) => write!(f,"{}",n),
+            Value::Number(n) => write!(f, "{}", n),
             Value::Var(p) => write!(f, "{}", p)
         }
     }
@@ -135,7 +93,10 @@ impl Display for Value {
 
 #[derive(Clone, Debug)]
 enum Pointer {
-    W, X, Y, Z
+    W,
+    X,
+    Y,
+    Z,
 }
 
 impl Pointer {
@@ -151,7 +112,7 @@ impl Pointer {
 
 impl Display for Pointer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f,"{}", match self {
+        write!(f, "{}", match self {
             Pointer::W => "w",
             Pointer::X => "x",
             Pointer::Y => "y",
@@ -186,25 +147,24 @@ impl Display for Instruction {
 
 struct ALU {
     input: Vec<isize>,
-    register: [isize;4]
+    register: [isize; 4],
 }
 
 impl ALU {
-
     fn new() -> ALU {
         ALU {
             input: vec![],
-            register: [0;4]
+            register: [0; 4],
         }
     }
 
     fn run_program(&mut self, input: &str, instructions: &[Instruction]) {
         self.input = input.chars().map(|c| c.to_digit(10).unwrap() as isize).rev().collect_vec();
-        instructions.iter().for_each(|i|self.execute(i));
+        instructions.iter().for_each(|i| self.execute(i));
     }
 
 
-    fn execute(&mut self, i: &Instruction)  {
+    fn execute(&mut self, i: &Instruction) {
         //println!("{:?}", i);
         match i {
             Instruction::Inp(a) => self.register[a.index()] = self.input.pop().unwrap(),
@@ -213,11 +173,11 @@ impl ALU {
             Instruction::Div(a, b) => {
                 debug_assert!(self.deref(b) != 0);
                 *self.var_mut(a) /= self.deref(b)
-            },
+            }
             Instruction::Mod(a, b) => {
                 debug_assert!(*self.var_mut(a) >= 0 && self.deref(b) > 0);
                 *self.var_mut(a) %= self.deref(b)
-            },
+            }
             Instruction::Eql(a, b) => *self.var_mut(a) = self.eql(a, b),
         }
         //println!("{:?}", self.register);
@@ -239,15 +199,13 @@ impl ALU {
     }
 
     fn eql(&self, a: &Pointer, b: &Value) -> isize {
-        if self.var(a) == &self.deref(b) {1} else {0}
+        if self.var(a) == &self.deref(b) { 1 } else { 0 }
     }
-
-
 }
 
 
-fn sub(z: isize, a: isize, i:isize) -> isize{
-    if ((z % 26) + a) !=i {1} else {0}
+fn sub(z: isize, a: isize, i: isize) -> isize {
+    if ((z % 26) + a) != i { 1 } else { 0 }
 }
 
 static params: [(isize, isize, isize); 14] = [
@@ -267,32 +225,24 @@ static params: [(isize, isize, isize); 14] = [
     (26, -3, 12)
 ];
 
-fn calc_z(i: &[isize], level: usize, cache: &mut HashMap<u64, isize>) -> isize {
+fn calc_z(i: &[isize], level: usize) -> isize {
     let (c, a, b) = params[level];
     let z = if level == 0 {
         0isize
-    } else if level > 9 {
-        let mut h = DefaultHasher::new();
-        i[0..level].hash(&mut h);
-        (level-1).hash(&mut h);
-        let key = h.finish();
-
-        if let Some(e) = cache.get(&key) {
-            *e
-        } else {
-            let z = calc_z(i, level-1, cache);
-            cache.insert(key, z);
-            z
-        }
     } else {
-        calc_z(i, level-1, cache)
+        calc_z(i, level - 1)
     };
     let i = i[level];
-    ((z / c) * ((25 * sub(z,  a, i)) + 1)) + ((i + b) * sub(z,  a, i))
+    ((z / c) * ((25 * sub(z, a, i)) + 1)) + ((i + b) * sub(z, a, i))
 }
 
-fn calc(i: &[isize],  cache: &mut HashMap<u64, isize>) -> isize {
-    calc_z(i,13, cache)
+fn calc_level(z: isize, i: isize, level: isize) -> isize {
+    let (c, a, b) = params[level as usize];
+    ((z / c) * ((25 * sub(z, a, i)) + 1)) + ((i + b) * sub(z, a, i))
+}
+
+fn calc(i: &[isize]) -> isize {
+    calc_z(i, 13)
 }
 
 fn formula() {
@@ -303,52 +253,47 @@ fn formula() {
         let mut formula = format!("{}", chunk.last().unwrap());
         count += 1;
         for i in chunk.iter().rev().skip(1) {
+            let f = format!("({})", i);
+            let pointer = match &i {
+                Inp(a) => a,
+                Add(a, _) => a,
+                Mul(a, _) => a,
+                Div(a, _) => a,
+                Mod(a, _) => a,
+                Eql(a, _) => a,
+            };
 
-        let f = format!("({})", i);
-        let pointer = match &i {
-            Inp(a) => a,
-            Add(a, _) => a,
-            Mul(a, _) => a,
-            Div(a, _) => a,
-            Mod(a, _) => a,
-            Eql(a, _) => a,
-        };
-
-        let replacement = match &i {
-            Inp(_) => format!("i[{}]", count),
-            Add(a, Number(0)) => format!("{}", a),
-            Add(_, _) => f,
-            Mul(_, Number(0)) => "0".to_string(),
-            Mul(_, _) => f,
-            Div(_, _) => f,
-            Mod(_, _) => f,
-            Eql(a, b) => format!("(if {}=={} {{1}} else {{0}})", a, b),
-        };
-        //println!("replacing {} with {}",&format!("{}", pointer), &f );
-        formula = formula.replace(&format!("{}", pointer), &replacement );
-        //println!("{}", formula);
+            let replacement = match &i {
+                Inp(_) => format!("i[{}]", count),
+                Add(a, Number(0)) => format!("{}", a),
+                Add(_, _) => f,
+                Mul(_, Number(0)) => "0".to_string(),
+                Mul(_, _) => f,
+                Div(_, _) => f,
+                Mod(_, _) => f,
+                Eql(a, b) => format!("(if {}=={} {{1}} else {{0}})", a, b),
+            };
+            //println!("replacing {} with {}",&format!("{}", pointer), &f );
+            formula = formula.replace(&format!("{}", pointer), &replacement);
+            //println!("{}", formula);
         }
 
 
         println!("let z = {};", formula)
-
-
     }
 }
 
 fn print_term(instructions: &Vec<Instruction>) {
-
     instructions.iter().for_each(|i| {
-        println!("{}",i)
+        println!("{}", i)
     });
-
 }
 
 
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
-    use crate::{ALU, Instruction, parse_input, Pointer, print_term, read_lines};
+    use crate::{ALU, calc, calc_level, calc_z, Instruction, parse_input, Pointer, print_term, read_lines, sub};
     use crate::Instruction::*;
     use crate::Pointer::*;
     use crate::Value::{Number, Var};
@@ -358,7 +303,7 @@ mod tests {
     fn test_negate() {
         let instructions = vec![
             Inp(X),
-            Mul(X, Number(-1))
+            Mul(X, Number(-1)),
         ];
         let mut alu = ALU::new();
         alu.run_program("1", &instructions);
@@ -371,7 +316,7 @@ mod tests {
             Inp(Z),
             Inp(X),
             Mul(Z, Number(3)),
-            Eql(Z, Var(X))
+            Eql(Z, Var(X)),
         ];
         let mut alu = ALU::new();
         alu.run_program("13", &instructions);
@@ -424,7 +369,7 @@ mod tests {
         (0..18).for_each(|i| {
             print!("{} ", l[i].split(' ').next().unwrap());
             (0..14).for_each(|j| {
-                print!("{:<4}", l[i+j*18].split_whitespace().skip(1).join(""))
+                print!("{:<4}", l[i + j * 18].split_whitespace().skip(1).join(""))
             });
             println!()
         });
@@ -456,15 +401,127 @@ mod tests {
                 Eql(a, _) => a,
             };
             //println!("replacing {} with {}",&format!("{}", pointer), &f );
-            formula = formula.replace(&format!("{}", pointer), &f );
+            formula = formula.replace(&format!("{}", pointer), &f);
             //println!("{}", formula);
             if count > 150 {
-                break
+                break;
             }
-            count+= 1
+            count += 1
         }
         println!("{}", formula)
     }
+}
 
+
+fn find_iz_for_z(target_z: isize, level: isize) -> Vec<(isize, isize)> {
+    let mut solutions = vec![];
+    for i in 1..10 {
+        let i = 10 - i;
+        for z in -999..999 {
+            let z2 = calc_level(z, i, level);
+            if z2 == target_z {
+                //println!("level: {}, i: {}, z: {} = z2 {}", level, i, z, z2);
+                solutions.push((i, z));
+            }
+        }
+    }
+    solutions
+}
+
+#[derive(Debug, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
+struct State {
+    target_z: isize,
+    number: Vec<isize>,
+    level: isize,
+}
+
+impl State {
+    fn start() -> Self{
+        Self {
+            target_z: 0,
+            number: vec![],
+            level: 13
+        }
+    }
+
+    fn successors(&self) -> Vec<(Self, isize)> {
+        if self.level >= 0 {
+            find_iz_for_z(self.target_z, self.level).into_iter()
+                .map(|(n, target_z)| {
+                    let mut number = self.number.clone();
+                    number.push(n);
+                    (Self {
+                        target_z,
+                        number,
+                        level: self.level - 1
+                    }, 10-n * (14-self.level))
+                }).collect()
+        } else {
+            vec![]
+        }
+    }
+
+    fn is_finished(&self) -> bool {
+        self.number.len() == 14 && self.target_z == 0
+    }
+
+    fn heuristic(&self) -> isize {
+        (14-self.number.len()) as isize
+    }
+}
+
+
+
+
+fn find_star() -> String {
+    let mut result = astar(&State::start(),
+                       |state|  state.successors(),
+                       |state| state.heuristic() ,
+                       |s| s.is_finished())
+        .map(|r|r.0.into_iter().collect_vec()).unwrap();
+
+    println!("{:?}", &result);
+    println!("{:?}", result.last().unwrap().number.iter().rev().collect_vec());
+
+    todo!()
+}
+
+
+
+#[test]
+fn experiment() {
+    let mut i = vec![9, 9, 9, 9, 5, 6, 8, 9, 4, 9, 8, 9, 9, 9];
+    let z = -3;
+    let z = ((z / 1) * ((25 * (if (if ((z % 26) + 12)==i[0] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[0]) + 9) * (if (if ((z % 26) + 12)==i[0] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 1) * ((25 * (if (if ((z % 26) + 12)==i[1] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[1]) + 4) * (if (if ((z % 26) + 12)==i[1] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 1) * ((25 * (if (if ((z % 26) + 12)==i[2] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[2]) + 2) * (if (if ((z % 26) + 12)==i[2] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 26) * ((25 * (if (if ((z % 26) + -9)==i[3] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[3]) + 5) * (if (if ((z % 26) + -9)==i[3] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 26) * ((25 * (if (if ((z % 26) + -9)==i[4] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[4]) + 1) * (if (if ((z % 26) + -9)==i[4] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 1) * ((25 * (if (if ((z % 26) + 14)==i[5] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[5]) + 6) * (if (if ((z % 26) + 14)==i[5] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 1) * ((25 * (if (if ((z % 26) + 14)==i[6] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[6]) + 11) * (if (if ((z % 26) + 14)==i[6] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 26) * ((25 * (if (if ((z % 26) + -10)==i[7] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[7]) + 15) * (if (if ((z % 26) + -10)==i[7] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 1) * ((25 * (if (if ((z % 26) + 15)==i[8] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[8]) + 7) * (if (if ((z % 26) + 15)==i[8] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 26) * ((25 * (if (if ((z % 26) + -2)==i[9] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[9]) + 12) * (if (if ((z % 26) + -2)==i[9] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 1) * ((25 * (if (if ((z % 26) + 11)==i[10] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[10]) + 15) * (if (if ((z % 26) + 11)==i[10] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 26) * ((25 * (if (if ((z % 26) + -15)==i[11] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[11]) + 9) * (if (if ((z % 26) + -15)==i[11] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = ((z / 26) * ((25 * (if (if ((z % 26) + -9)==i[12] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[12]) + 12) * (if (if ((z % 26) + -9)==i[12] {1} else {0})==0 {1} else {0}));
+    println!("{}", z);
+    let z = calc_level(z, i[13], 13);
+    println!("{}", z);
+
+
+    println!("----");
 }
 
