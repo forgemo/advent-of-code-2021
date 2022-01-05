@@ -417,7 +417,7 @@ fn find_iz_for_z(target_z: isize, level: isize) -> Vec<(isize, isize)> {
     let mut solutions = vec![];
     for i in 1..10 {
         let i = 10 - i;
-        for z in -999..999 {
+        for z in -10000..10000 {
             let z2 = calc_level(z, i, level);
             if z2 == target_z {
                 //println!("level: {}, i: {}, z: {} = z2 {}", level, i, z, z2);
