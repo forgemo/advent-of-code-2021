@@ -24,7 +24,7 @@ fn main() {
     formula();
 
     let task_a = task_a(read_lines("input/day_24.txt"));
-    assert_eq!(580810, task_a);
+    assert_eq!(39924989499969, task_a);
     let task_b = task_b(read_lines("input/day_24.txt"));
     assert_eq!(1265621119006734, task_b);
     println!("task_a: {}, task_b: {}", task_a, task_b);
@@ -417,7 +417,7 @@ fn find_iz_for_z(target_z: isize, level: isize) -> Vec<(isize, isize)> {
     let mut solutions = vec![];
     for i in 1..10 {
         let i = 10 - i;
-        for z in -10000..10000 {
+        for z in -1000..1000 {
             let z2 = calc_level(z, i, level);
             if z2 == target_z {
                 //println!("level: {}, i: {}, z: {} = z2 {}", level, i, z, z2);
@@ -454,7 +454,8 @@ impl State {
                         target_z,
                         number,
                         level: self.level - 1
-                    }, 10-n * (14-self.level))
+                    //}, 10-n * (14-self.level))
+                    }, n * (14-self.level))
                 }).collect()
         } else {
             vec![]
@@ -466,7 +467,7 @@ impl State {
     }
 
     fn heuristic(&self) -> isize {
-        (14-self.number.len()) as isize
+        (13-self.number.len()) as isize
     }
 }
 
@@ -482,6 +483,7 @@ fn find_star() -> String {
 
     println!("{:?}", &result);
     println!("{:?}", result.last().unwrap().number.iter().rev().collect_vec());
+    println!("{:?}", result.last().unwrap().number.iter().rev().join(""));
 
     todo!()
 }
@@ -490,8 +492,8 @@ fn find_star() -> String {
 
 #[test]
 fn experiment() {
-    let mut i = vec![9, 9, 9, 9, 5, 6, 8, 9, 4, 9, 8, 9, 9, 9];
-    let z = -3;
+    let mut i = vec![3, 4, 4, 9, 5, 6, 8, 9, 4, 9, 7, 9, 9, 9];
+    let z = 0;
     let z = ((z / 1) * ((25 * (if (if ((z % 26) + 12)==i[0] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[0]) + 9) * (if (if ((z % 26) + 12)==i[0] {1} else {0})==0 {1} else {0}));
     println!("{}", z);
     let z = ((z / 1) * ((25 * (if (if ((z % 26) + 12)==i[1] {1} else {0})==0 {1} else {0})) + 1)) + (((0 + i[1]) + 4) * (if (if ((z % 26) + 12)==i[1] {1} else {0})==0 {1} else {0}));
@@ -521,6 +523,7 @@ fn experiment() {
     let z = calc_level(z, i[13], 13);
     println!("{}", z);
 
+    assert_eq!(z, 0);
 
     println!("----");
 }
