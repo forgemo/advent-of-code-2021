@@ -26,13 +26,14 @@ fn main() {
     let task_a = task_a(read_lines("input/day_24.txt"));
     assert_eq!(39924989499969, task_a);
     let task_b = task_b(read_lines("input/day_24.txt"));
-    assert_eq!(1265621119006734, task_b);
+    assert_eq!(16811412161117, task_b);
     println!("task_a: {}, task_b: {}", task_a, task_b);
 }
 
 
 fn task_a(lines: impl Iterator<Item=String>) -> usize {
-    let result = find_star();
+    let result = run_a_star();
+
     println!("{:?}", result);
 
     todo!()
@@ -204,9 +205,7 @@ impl ALU {
 }
 
 
-fn sub(z: isize, a: isize, i: isize) -> isize {
-    if ((z % 26) + a) != i { 1 } else { 0 }
-}
+
 
 static params: [(isize, isize, isize); 14] = [
     (1, 12, 9),
@@ -224,6 +223,10 @@ static params: [(isize, isize, isize); 14] = [
     (26, -9, 12),
     (26, -3, 12)
 ];
+
+fn sub(z: isize, a: isize, i: isize) -> isize {
+    if ((z % 26) + a) != i { 1 } else { 0 }
+}
 
 fn calc_z(i: &[isize], level: usize) -> isize {
     let (c, a, b) = params[level];
@@ -474,7 +477,7 @@ impl State {
 
 
 
-fn find_star() -> String {
+fn run_a_star() -> String {
     let mut result = astar(&State::start(),
                        |state|  state.successors(),
                        |state| state.heuristic() ,

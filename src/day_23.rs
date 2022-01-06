@@ -1,392 +1,384 @@
+use std::array::from_ref;
+use std::borrow::Borrow;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
+use std::ops::{Index, IndexMut};
+use std::ptr;
+use std::ptr::hash;
+use std::rc::Rc;
+use std::slice::SliceIndex;
 use itertools::{Itertools};
-use pathfinding::prelude::bfs;
+use pathfinding::prelude::{astar, bfs};
+use rayon::iter::Empty;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use regex::Regex;
+use crate::Cell::*;
+use crate::CellType::{Doorstep, Floor, Room};
 use crate::lib::read_lines;
+use crate::Occupant::{Amphipod, Wall};
 
 mod lib;
 
 fn main() {
     let task_a = task_a(read_lines("input/day_23.txt"));
-    assert_eq!(580810, task_a);
-    let task_b = task_b(read_lines("input/day_23.txt"));
-    assert_eq!(1265621119006734, task_b);
-    println!("task_a: {}, task_b: {}", task_a, task_b);
+    println!("result-a: {}", task_a);
 }
 
-fn task_a(lines: impl Iterator<Item=String>) -> isize {
+fn task_a(lines: impl Iterator<Item=String>) -> usize {
+    let energy_map = HashMap::from([
+        ('A', 1),('B', 10),('C', 100),('D', 1000),
+    ]);
+    let start = Map::from(lines, energy_map);
 
-    let tiles = "##############...........####B#C#B#D###  #A#D#C#A#    #########  ";
-    let map = Map::from_tiles(&tiles.chars().collect_vec(), 13);
-
-    let result = solve(&map, &mut HashMap::new());
-
+    let result = astar(&start, |m|
+        m.successors(),
+          |m| m.heuristic(),
+          |m| m.is_goal());
     println!("{:?}", result);
-
-    todo!()
-}
-
-fn task_b(lines: impl Iterator<Item=String>) -> isize {
-    todo!()
+    result.unwrap().1
 }
 
 
-fn parse_input(lines: impl Iterator<Item=String>) -> usize {
-    todo!()
+type AmphiColor = char;
+
+type RoomId = char;
+type WrongColorCount = RefCell<usize>;
+type MustEnterRoom = bool;
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+enum Occupant {
+    Amphipod(AmphiColor, MustEnterRoom),
+    Wall,
 }
 
-#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
-struct Amphipod {
-    label: char,
-    energy_per_step: usize,
-    must_move_next: bool,
-    color: ColorId
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+enum CellType {
+    Floor,
+    Doorstep(RoomId),
+    Room(RoomId),
 }
 
-impl Amphipod {
-    fn new(label: char, color: ColorId, energy_per_step: usize) -> Self {
-        Self {
-            label,
-            energy_per_step,
-            must_move_next: false,
-            color
-        }
-    }
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+enum Cell {
+    Empty(CellType),
+    Occupied(CellType, Occupant),
+}
 
-    fn from_char(color: &char) -> Option<Self> {
-        let energy_per_step = match color {
-            'A' => Some(1),
-            'B' => Some(10),
-            'C' => Some(100),
-            'D' => Some(1000),
-            _ => None
-        };
-        energy_per_step
-            .map(|e|Self::new(*color, *color, e))
+impl Default for Cell {
+    fn default() -> Self {
+        Self::Empty(CellType::Floor)
     }
 }
 
-type ColorId = char;
-#[derive(Clone, PartialOrd, PartialEq, Eq, Hash)]
-enum Entrance {None, ToMixedRoom, ToColoredRoom(ColorId), ToEmptyRoom}
-impl Default for Entrance { fn default() -> Self { Self::None } }
 
-#[derive(Clone, PartialOrd, PartialEq, Eq, Hash)]
-enum Tile {Wall, Floor}
+// --------------- Map --------------------
 
-impl From<&char> for Tile {
-    fn from(c: &char) -> Self {
-        match c {
-            '#' | ' ' => Self::Wall,
-            _ => Self::Floor
-        }
-    }
-}
+type Steps = usize;
+type EnergyUse = usize;
 
-impl Display for Tile {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Tile::Wall => write!(f, "░"),
-            Tile::Floor => write!(f, " ")
-        }
-    }
-}
-
-#[derive(Clone, PartialOrd, PartialEq, Eq, Hash)]
+#[derive(Debug, Eq, Clone)]
 struct Map {
-    burrow: Vec<Tile>,
-    entrances: Vec<Entrance>,
-    amphipods: Vec<Option<Amphipod>>,
-    width: usize,
-    height: usize
+    grid: Grid<Cell>,
+    wcc_map: HashMap<RoomId, WrongColorCount>,
+    energy_map: HashMap<AmphiColor, EnergyUse>,
+    room_cell_count: usize,
 }
 
-#[derive(Debug)]
-struct Coords {
-    x: isize,
-    y: isize
+impl Hash for Map {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        self.grid.hash(h)
+    }
 }
 
+impl PartialEq for Map {
+    fn eq(&self, other: &Self) -> bool {
+        self.grid.eq(&other.grid)
+    }
+}
+
+impl Display for Map {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = self.grid.rows.iter().map(|row| row.iter().map(|c| match c {
+            Empty(_) => ' ',
+            Occupied(Floor, Wall) => '▒',
+            Occupied(_, Amphipod(id, _)) => *id,
+            _ => panic!("unexpected {:?}", c)
+        }).join("")).join("\n");
+
+        write!(f, "{}", s)
+    }
+}
 
 impl Map {
-    fn from_tiles(
-        tiles: &[char],
-        width: usize
-    ) -> Self {
-        let burrow: Vec<Tile> = tiles.iter().map(Tile::from).collect();
-        let entrances = vec![Entrance::default(); burrow.len()];
-        let amphipods = vec![None; burrow.len()];
-        let height = burrow.len() / width;
-        let mut map = Self {burrow, entrances, amphipods, width, height };
 
-        tiles.iter().enumerate()
-            .filter_map(|(i, a)| Amphipod::from_char(a).map(|a|(i,a)))
-            .for_each(|(i,a)| {
-                map.amphipods[i] = Some(a);
-                let Coords{x, y: _} = map._index_to_coords(&i);
-                map.set_entrance(&Coords{x, y: 1}, Entrance::ToMixedRoom)
-        });
+    pub fn from(
+        lines: impl Iterator<Item=String>,
+        energy_map: HashMap<AmphiColor, EnergyUse>) -> Self {
 
-        map
-    }
+        let mut wcc_map = HashMap::new();
+        wcc_map.extend(energy_map.keys()
+            .map(|room|(*room, RefCell::new(0))));
 
-    fn _coords_to_index(&self, c: &Coords ) -> usize {
-        c.y as usize * self.width + c.x as usize
-    }
 
-    fn _index_to_coords(&self, i: &usize) -> Coords {
-        Coords {
-            x: (i % self.width) as isize,
-            y: (i / self.width) as isize
+        let rows = lines
+            .map(|l| l.chars().collect_vec())
+            .map(|chars| {
+                let mut color_stack = energy_map.keys().sorted().collect_vec();
+                color_stack.reverse();
+                chars.into_iter()
+                    .map(|c| match c {
+                    '.' => Empty(Floor),
+                    ' '|'#' => Occupied(Floor, Wall),
+                    amphi_color => {
+                        let room_id = color_stack.pop().unwrap();
+                        if *room_id != amphi_color {
+                            wcc_map.get(room_id).unwrap().replace_with(|c| *c+1);
+                        }
+                        Occupied(
+                            Room(*room_id),
+                            Amphipod(amphi_color, false)
+                        )
+                    }
+                }).collect_vec()
+            }).collect_vec();
+
+        let room_cell_count = energy_map.len() * 2;
+
+        Self {
+            grid: Grid::from(rows),
+            wcc_map,
+            energy_map,
+            room_cell_count
         }
     }
 
-    fn set_entrance(&mut self, c: &Coords, e: Entrance) {
-        let index = self._coords_to_index(c);
-        self.entrances[index] = e;
+    pub fn visit_reachable_from(&self, from: &Position) -> Vec<(&Cell, Position, Steps)> {
+        self.recurse_reachable_from(from, 1, &mut HashSet::new()).into_iter()
+            .filter(|to_cell| self.is_valid_move(&self[from], to_cell.0))
+            .collect_vec()
     }
 
-    fn set_amphipod(&mut self, c: &Coords, a: Option<Amphipod>) {
-        let index = self._coords_to_index(c);
-        self.amphipods[index] = a;
+    pub fn visit_amphipods(&self) -> impl Iterator<Item=(&Cell, Position)> {
+        self.grid.visit_cells_with_position().filter(|(c, _)| matches!(c, Occupied(_, Amphipod(_, _))))
     }
 
-    fn possible_moves_for(&self, amphipod_index: &usize) ->  Vec<Coords> {
-        let from = self._index_to_coords(amphipod_index);
-        let amphipod = self.amphipods[*amphipod_index].as_ref().unwrap();
-        self.free_spaces_around(&from).into_iter()
-            .filter(|to|{
-                let entering_room = from.y == 1 && to.y == 2;
-                !entering_room || self.entrances[*amphipod_index].allows_entering_room(amphipod)
-            }).collect_vec()
+    fn recurse_reachable_from(&self, p: &Position, steps: Steps, visited: &mut HashSet<Position>) -> Vec<(&Cell, Position, Steps)> {
+        let neighbours = p.neighbours().into_iter()
+            .filter(|n| matches!(self[n], Cell::Empty(_)))
+            .filter(|n| !visited.contains(n))
+            .collect_vec();
+
+        visited.extend(neighbours.iter().cloned());
+
+        let mut next_neighbours = neighbours.iter()
+            .flat_map(|n| self.recurse_reachable_from(n, steps + 1, visited))
+            .collect_vec();
+
+        next_neighbours.extend(neighbours.into_iter()
+            .map(|n| (&self[&n], n, steps)));
+
+        next_neighbours
     }
 
-    fn move_amphipod(&mut self, from: &Coords, to: &Coords) {
-        let from_index = self._coords_to_index(from);
-        let amphipod = self.amphipods[from_index].clone().unwrap();
-        let to_index = self._coords_to_index(to);
-        self.amphipods[from_index] = None;
-        self.amphipods[to_index] = Some(amphipod.clone());
+    fn is_valid_move(&self, from: &Cell, to: &Cell) -> bool {
+        match (from, to) {
+            (_, Empty(Doorstep(_))) => false,
+            (Occupied(Floor, Amphipod(_, must_enter_room)), Empty(Floor)) if *must_enter_room => false,
+            (Occupied(Room(a), _), Empty(Room(b))) if a == b => true,
+            (Occupied(Room(_), Amphipod(a, _)), Empty(Room(b))) => {
+                let deb = format!("{}", self);
+                let vip = deb.contains("▒A▒D▒C▒A▒" )&& deb.contains("▒B▒C▒ ▒D▒");
+                if vip && *a == 'C' && *b == 'C' {
+                    println!("{:?} -> {:?}", from, to);
+                    println!("{}s\n{}", self,  a == b && *self.wcc_map.get(b).unwrap().borrow() == 0);
+                    println!("{:?}", self.wcc_map);
+                }
+                a == b && *self.wcc_map.get(b).unwrap().borrow() == 0
+            },
+            (Occupied(_, Amphipod(a, _)), Empty(Room(b))) => {
+                a == b && *self.wcc_map.get(b).unwrap().borrow() == 0
+            },
+            (Occupied(Room(_), Amphipod(_, _)), Empty(Floor)) => true,
+            _ => panic!("unexpected case {:?} -> {:?}", from, to)
+        }
+    }
 
-        let enters_room = from.y == 1 && to.y == 2;
-        let leaves_room = from.y == 2 && to.y == 1;
-        if enters_room {
-            println!("enters room");
-            let entrance = &mut self.entrances[from_index];
-            *entrance = Entrance::ToColoredRoom(amphipod.color);
-        } else if leaves_room {
-            let is_room_empty = self.is_room_empty(from.x);
-            let entrance = &mut self.entrances[to_index];
-            if is_room_empty {
-                *entrance = Entrance::ToEmptyRoom
-            }
+    fn leave_field(&mut self, p: &Position) -> Cell {
+        let replacement = match &self[p] {
+            Occupied(Room(room), Amphipod(_, _)) => Empty(Room(*room)),
+            Occupied(Floor, _) => Empty(Floor),
+            _ => panic!("unexpected case {:?}", self[p])
+        };
+        self.grid.replace(p, replacement)
+    }
+
+    fn occupy_field(&mut self, p: &Position, amphi_color: AmphiColor) -> Cell {
+        let replacement = match &self[p] {
+            Empty(Room(id)) => Occupied(Room(*id), Amphipod(amphi_color, false)),
+            Empty(Floor) => Occupied(Floor, Amphipod(amphi_color, true)),
+            _ => panic!("unexpected case {:?}", self[p])
+        };
+        self.grid.replace(p, replacement)
+    }
+
+    fn move_amphipod(&mut self, from: &Position, to: &Position) {
+        let from_cell = self.leave_field(from);
+        let amphi_color = match &from_cell {
+            Occupied(_, Amphipod(c, _)) => c,
+            _ => panic!("unexpected case")
+        };
+        let to_cell = self.occupy_field(to, *amphi_color);
+        self.update_wcc(&from_cell, &to_cell);
+    }
+
+    fn update_wcc(&mut self, from: &Cell, to: &Cell, ) {
+
+        let update = match (from, to) {
+            (Occupied(Room(from_room), Amphipod(amphi_color, _)), Empty(Room(to_room))) => {
+                if to_room != from_room && from_room != amphi_color { Some(from_room) } else {None}
+            },
+            (Occupied(Room(from_room), Amphipod(amphi_color, _)), Empty(Floor)) => {
+                if from_room != amphi_color { Some(from_room) } else {None}
+            },
+            (Occupied(_, Amphipod(_,_)), Empty(_)) => None,
+            _ => panic!("unexpected {:?} {:?}", from, to)
+        };
+        if let Some(from_room) = update {
+            self.wcc_map.get(from_room).unwrap().replace_with(|c|*c-1);
         }
 
-        self.amphipods[to_index].as_mut().unwrap().must_move_next = leaves_room; // todo: consider this
     }
 
-    fn free_spaces_around(&self, coords: &Coords) -> Vec<Coords> {
-        vec![(-1,0), (1,0), (0,-1), (0,1)].into_iter()
-            .map(|(x, y)| (coords.x+x, coords.y+y))
-            .map(|(x, y)| Coords{x, y})
-            .filter(|c| self.is_on_map(c))
-            .filter(|c| {
-                let i = self._coords_to_index(c);
-                matches!(self.burrow[i], Tile::Floor) && self.amphipods[i].is_none()
+    fn successors(&self) -> Vec<(Self, EnergyUse)> {
+        self.visit_amphipods()
+            .map(|(cell, position)| match cell {
+                Occupied(_, Amphipod(amphi_color, _)) => (amphi_color, position),
+                _ => panic!("unexpected case {:?}", cell)
+            })
+            .flat_map(|(amphi_color, from)| {
+                //println!("\n--from {:?}----\n{}\n", from, self);
+                self.visit_reachable_from(&from).iter()
+                    .map(|(_, to, steps)| {
+                        let mut successor = self.clone();
+                        successor.move_amphipod(&from, to);
+
+                        let energy_use = self.energy_map.get(amphi_color).unwrap();
+                        (successor, *steps * energy_use)
+                    }).collect_vec()
             })
             .collect_vec()
     }
 
-    fn is_on_map(&self, coords: &Coords) -> bool {
-        coords.x>=0 && coords.x < self.width as isize
-            && coords.y >= 0 && coords.y < self.height as isize
+    fn heuristic(&self) -> usize {
+        //todo: optimize by adding correct_cell_count to Self
+        let amphipods_in_correct_cell_count = self.visit_amphipods().filter(|(c, p)|
+            matches!(c, Occupied(Room(r), Amphipod(a, _)) if a == r)
+        ).count();
+
+        self.room_cell_count - amphipods_in_correct_cell_count
     }
 
-    fn is_room_empty(&self, x: isize) -> bool {
-        let one = self._coords_to_index(&Coords {x, y: 2});
-        let two = self._coords_to_index(&Coords {x, y: 3});
-        self.amphipods[one].is_none() && self.amphipods[two].is_none()
+    fn is_goal(&self) -> bool {
+        self.heuristic() == 0
     }
-
-    fn is_room_full(&self, x: isize) -> bool {
-        let one = self._coords_to_index(&Coords {x, y: 2});
-        let two = self._coords_to_index(&Coords {x, y: 3});
-        self.amphipods[one].is_some() && self.amphipods[two].is_some()
-    }
-
-
-    fn is_solved(&self) -> bool {
-        self.entrances.iter().filter(|e|matches!(e, Entrance::ToColoredRoom(_))).count() == 4
-        //&& self.is_room_full(3) && self.is_room_full(5)
-        //&& self.is_room_full(7) && self.is_room_full(9)
-    }
-
-    fn successors(&self) -> Vec<(Self, usize)> {
-        self.amphipods.iter().enumerate()
-            .filter(|(_, a)|a.is_some())
-            .map(|(i, a)|(i, a.as_ref().unwrap()))
-            .map(|(i, a)|(i, self.possible_moves_for(&i)))
-            .flat_map(|(i, moves)| moves.into_iter()
-                .map(move |m|{
-                    let mut successor = self.clone();
-                    successor.move_amphipod(&self._index_to_coords(&i), &m);
-                    let cost = self.amphipods[i].as_ref().map(|a|a.energy_per_step).unwrap();
-                    (successor, cost)
-            }))
-            .collect()
-    }
-
-    fn heuristics(&self) -> usize {
-            todo!()
-
-        //todo euklid dist to room
-    }
-
 }
 
+impl Index<&Position> for Map {
+    type Output = Cell;
 
-fn solve(map: &Map, cache: &mut HashMap<u64, usize>) -> usize {
-    println!("{:?}\n", map);
-    if map.is_solved() {
-        0
-    } else {
-
-        map.successors().iter().map(|(m, cost) | {
-            let mut h = DefaultHasher::new();
-            map.hash(&mut h);
-            let key = h.finish();
-            println!("{:?}\n {}", map, key);
-            cost + if let Some(solution) = cache.get(&key) {
-                println!("hit");
-                *solution
-            } else {
-                let solution = solve(m, cache);
-                cache.insert(key, solution);
-                solution
-            }
-        }).min().unwrap()
+    fn index(&self, index: &Position) -> &Self::Output {
+        &self.grid[index]
     }
 }
 
 
-impl Display for Map {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut buffer: Vec<char> = vec![];
-        self.burrow.chunks(self.width).for_each(|c| {
-            buffer.extend(c.iter().flat_map(|t|format!("{}", t).chars().collect_vec()));
-        });
-        self.entrances.iter().enumerate().for_each(|(i, e)| {
-            match e {
-                Entrance::None => {}
-                Entrance::ToMixedRoom => {buffer[i] = 'm';}
-                Entrance::ToColoredRoom(c) => {buffer[i] = c.to_ascii_lowercase();}
-                Entrance::ToEmptyRoom => {buffer[i] = 'e'}
-            }
-        });
-        self.amphipods.iter()
-            .enumerate()
-            .flat_map(|(i,a)| a.as_ref().map(|a|(i, a)))
-            .for_each(|(i, a)| {
-                buffer[i] = a.label
-            });
+// --------------- GRID --------------------
 
-        write!(f, "{}", buffer.chunks(self.width)
-            .map(|c| c.iter().join("")).join("\n"))
+#[derive(Debug, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
+struct Position(usize, usize);
+
+impl Position {
+    fn neighbours(&self) -> Vec<Self> {
+        vec![
+            Position(self.0 + 1, self.1),
+            Position(self.0 - 1, self.1),
+            Position(self.0, self.1 + 1),
+            Position(self.0, self.1 - 1),
+        ]
     }
 }
 
-impl Debug for Map {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        <&Map as Display>::fmt(&self, f)
-    }
+#[derive(Clone, Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
+struct Grid<T> where T: Default + Clone {
+    rows: Vec<Vec<T>>,
 }
 
-impl Entrance {
-    fn allows_entering_room(&self, a: &Amphipod) -> bool {
-        match self {
-            Entrance::None => false,
-            Entrance::ToMixedRoom => false,
-            Entrance::ToColoredRoom(color) => color == &a.color,
-            Entrance::ToEmptyRoom => true,
+impl<T> Grid<T> where T: Default + Clone {
+    fn new(width: usize, height: usize) -> Self {
+        Grid {
+            rows: vec![vec![T::default(); width]; height]
         }
     }
+
+    fn swap(&mut self, a: &Position, b: &Position) {
+        unsafe {
+            let pa: *mut T = &mut self[a];
+            let pb: *mut T = &mut self[b];
+            ptr::swap(pa, pb);
+        }
+    }
+
+    fn replace(&mut self, at: &Position, mut with: T) -> T {
+        unsafe {
+            let pa: *mut T = &mut self[at];
+            let pb: *mut T = &mut with;
+            ptr::swap(pa, pb);
+        }
+        with
+    }
+
+    fn visit_rows(&self) -> impl Iterator<Item=&Vec<T>> {
+        self.rows.iter()
+    }
+
+    fn visit_cells(&self) -> impl Iterator<Item=&T> {
+        self.visit_rows().flat_map(|r| r.iter())
+    }
+
+    fn visit_cells_with_position(&self) -> impl Iterator<Item=(&T, Position)> {
+        self.visit_rows()
+            .enumerate()
+            .flat_map(|(row_index, row)| row.iter()
+                .enumerate()
+                .map(move |(col_index, cell)| {
+                    (cell, Position(col_index, row_index))
+                }))
+    }
 }
 
+impl<'a, T> Index<&'a Position> for Grid<T>
+    where T: Default + Clone {
+    type Output = T;
 
-#[cfg(test)]
-mod tests {
-    use itertools::Itertools;
-    use pathfinding::prelude::{bfs, dijkstra};
-    use crate::{Amphipod, Map};
-
-    #[test]
-    fn test_build_map() {
-        let tiles = "##############...........####B#C#B#D###  #A#D#C#A#    #########  ";
-        let map = Map::from_tiles(&tiles.chars().collect_vec(), 13);
-        println!("{}", map);
+    fn index(&self, index: &'a Position) -> &Self::Output {
+        &self.rows[index.1][index.0]
     }
-
-    #[test]
-    fn test_goal() {
-        //let burrow = Burrow {
-        //    room_color: vec![Some(0), Some(1), Some(2), Some(3)],
-        //    amphipods: vec![
-        //        Amphipod::new('A', 0, 1),
-        //        Amphipod::new('A', 0, 1),
-        //        Amphipod::new('B', 1, 10),
-        //        Amphipod::new('B', 1, 10),
-        //        Amphipod::new('C', 2, 100),
-        //        Amphipod::new('C', 2, 100),
-        //        Amphipod::new('D', 3, 1000),
-        //        Amphipod::new('D', 3, 1000)
-        //    ]
-        //};
-        //assert!(burrow.target_reached());
-
-    }
-
-    #[test]
-    fn test_example_0() {
-
-        //let burrow = Burrow {
-        //    room_color: vec![None, None, None, None],
-        //    amphipods: vec![
-        //        Amphipod::new('A', 0, 1),
-        //        Amphipod::new('A', 0, 1),
-        //        Amphipod::new('B', 1, 10),
-        //        Amphipod::new('B', 1, 10),
-        //        Amphipod::new('C', 2, 100),
-        //        Amphipod::new('C', 2, 100),
-        //        Amphipod::new('D', 3, 1000),
-        //        Amphipod::new('D', 3, 1000)
-        //    ]
-        //};
-//
-
-        //println!("///");
-        //assert_eq!(4, burrow.successors().len());
-
-
-        let tiles = "##############...........####B#C#B#D###  #A#D#C#A#    #########  ";
-        let map = Map::from_tiles(&tiles.chars().collect_vec(), 13);
-
-
-        let result = bfs(
-            &map,
-            |b| {
-                //println!("{}", b);
-                let s = b.successors();
-                //println!("{:?}", s);
-                s.into_iter().map(|(s, _)|s).collect_vec()
-            },
-            |b| b.is_solved()
-        );
-
-        println!("{:?}", result);
-    }
-
 }
+
+impl <T>From<Vec<Vec<T>>> for Grid<T> where T: Default + Clone {
+    fn from(rows: Vec<Vec<T>>) -> Self {
+        Grid { rows }
+    }
+}
+
+impl<'a, T> IndexMut<&'a Position> for Grid<T>
+    where T: Default + Clone {
+    fn index_mut(&mut self, index: &'a Position) -> &mut Self::Output {
+        &mut self.rows[index.1][index.0]
+    }
+}
+
 
