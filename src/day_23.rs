@@ -23,11 +23,11 @@ use crate::Occupant::{Amphipod, Wall};
 mod lib;
 
 fn main() {
-    //let task_a = task(read_lines("../input/day_23_1.txt"));
+    //let task_a = task(read_lines("input/day_22_1.txt"));
     //assert_eq!(15322, task_a);
     //println!("result-a: {}", task_a);
 
-    let task_b = task(read_lines("../input/day_23_2.txt"));
+    let task_b = task(read_lines("input/day_23_2.txt"));
     //assert_eq!(, task_b);
     println!("result-b: {}", task_b);
 }
