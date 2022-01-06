@@ -23,16 +23,16 @@ use crate::Occupant::{Amphipod, Wall};
 mod lib;
 
 fn main() {
-    let task_a = task(read_lines("input/day_23_1.txt"));
+    let task_a = task(read_lines("input/day_23_1.txt"), 2);
     assert_eq!(15322, task_a);
     println!("result-a: {}", task_a);
 
-    let task_b = task(read_lines("input/day_23_2.txt"));
+    let task_b = task(read_lines("input/day_23_2.txt"), 4);
     //assert_eq!(, task_b);
     println!("result-b: {}", task_b);
 }
 
-fn task(lines: impl Iterator<Item=String>) -> usize {
+fn task(lines: impl Iterator<Item=String>, room_height: usize) -> usize {
     let energy_map = HashMap::from([
         ('A', 1),('B', 10),('C', 100),('D', 1000),
     ]);
@@ -42,13 +42,15 @@ fn task(lines: impl Iterator<Item=String>) -> usize {
         Position(7,1),
         Position(9,1)
     ];
-    let start = Map::from(lines, energy_map, door_steps);
+    let start = Map::from(lines, energy_map, door_steps, room_height);
 
     let result = astar(&start, |m|
         m.successors(),
           |m| m.heuristic(),
           |m| m.is_goal());
     //println!("{:?}", result);
+    println!("---------------------");
+    result.as_ref().unwrap().0.iter().for_each(|m| println!("{}", m));
     result.unwrap().1
 }
 
@@ -128,7 +130,8 @@ impl Map {
     pub fn from(
         lines: impl Iterator<Item=String>,
         energy_map: HashMap<AmphiColor, EnergyUse>,
-        door_steps: Vec<Position>) -> Self {
+        door_steps: Vec<Position>,
+        room_height: usize) -> Self {
 
         let mut wcc_map = HashMap::new();
         wcc_map.extend(energy_map.keys()
@@ -157,7 +160,7 @@ impl Map {
                 }).collect_vec()
             }).collect_vec();
 
-        let room_cell_count = energy_map.len() * 2;
+        let room_cell_count = energy_map.len() * room_height;
 
         let mut map = Self {
             grid: Grid::from(rows),
@@ -208,13 +211,15 @@ impl Map {
             (Occupied(Floor, Amphipod(_, must_enter_room)), Empty(Floor)) if *must_enter_room => false,
             (Occupied(Room(a), _), Empty(Room(b))) if a == b => true,
             (Occupied(Room(_), Amphipod(a, _)), Empty(Room(b))) => {
-                let deb = format!("{}", self);
-                let vip = deb.contains("▒A▒D▒C▒A▒" )&& deb.contains("▒B▒C▒ ▒D▒");
-                if vip && *a == 'C' && *b == 'C' {
-                    println!("{:?} -> {:?}", from, to);
-                    println!("{}s\n{}", self,  a == b && *self.wcc_map.get(b).unwrap().borrow() == 0);
-                    println!("{:?}", self.wcc_map);
-                }
+                //let deb = format!("{}", self);
+                //let vip =
+                //    deb.contains("▒B▒C▒B▒ ▒" ) &&
+                //    deb.contains("▒D▒C▒B▒A▒");
+                //if vip {
+                //    println!("{:?} -> {:?}", from, to);
+                //    println!("{}s\n{}", self,  a == b && *self.wcc_map.get(b).unwrap().borrow() == 0);
+                //    println!("{:?}", self.wcc_map);
+                //}
                 a == b && *self.wcc_map.get(b).unwrap().borrow() == 0
             },
             (Occupied(_, Amphipod(a, _)), Empty(Room(b))) => {
