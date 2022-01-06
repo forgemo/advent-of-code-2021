@@ -23,9 +23,9 @@ use crate::Occupant::{Amphipod, Wall};
 mod lib;
 
 fn main() {
-    //let task_a = task(read_lines("input/day_22_1.txt"));
-    //assert_eq!(15322, task_a);
-    //println!("result-a: {}", task_a);
+    let task_a = task(read_lines("input/day_22_1.txt"));
+    assert_eq!(15322, task_a);
+    println!("result-a: {}", task_a);
 
     let task_b = task(read_lines("input/day_23_2.txt"));
     //assert_eq!(, task_b);
@@ -36,7 +36,13 @@ fn task(lines: impl Iterator<Item=String>) -> usize {
     let energy_map = HashMap::from([
         ('A', 1),('B', 10),('C', 100),('D', 1000),
     ]);
-    let start = Map::from(lines, energy_map);
+    let door_steps = vec![
+        Position(3,1),
+        Position(5,1),
+        Position(7,1),
+        Position(9,1)
+    ];
+    let start = Map::from(lines, energy_map, door_steps);
 
     let result = astar(&start, |m|
         m.successors(),
@@ -62,7 +68,7 @@ enum Occupant {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum CellType {
     Floor,
-    Doorstep(RoomId),
+    Doorstep,
     Room(RoomId),
 }
 
@@ -121,7 +127,8 @@ impl Map {
 
     pub fn from(
         lines: impl Iterator<Item=String>,
-        energy_map: HashMap<AmphiColor, EnergyUse>) -> Self {
+        energy_map: HashMap<AmphiColor, EnergyUse>,
+        door_steps: Vec<Position>) -> Self {
 
         let mut wcc_map = HashMap::new();
         wcc_map.extend(energy_map.keys()
@@ -152,12 +159,19 @@ impl Map {
 
         let room_cell_count = energy_map.len() * 2;
 
-        Self {
+        let mut map = Self {
             grid: Grid::from(rows),
             wcc_map,
             energy_map,
             room_cell_count
-        }
+        };
+
+        door_steps.iter().for_each(|p| {
+            map.grid.replace(p, Empty(Doorstep));
+        });
+
+        map
+
     }
 
     pub fn visit_reachable_from(&self, from: &Position) -> Vec<(&Cell, Position, Steps)> {
@@ -190,7 +204,7 @@ impl Map {
 
     fn is_valid_move(&self, from: &Cell, to: &Cell) -> bool {
         match (from, to) {
-            (_, Empty(Doorstep(_))) => false,
+            (_, Empty(Doorstep)) => false,
             (Occupied(Floor, Amphipod(_, must_enter_room)), Empty(Floor)) if *must_enter_room => false,
             (Occupied(Room(a), _), Empty(Room(b))) if a == b => true,
             (Occupied(Room(_), Amphipod(a, _)), Empty(Room(b))) => {
