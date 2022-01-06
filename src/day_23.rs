@@ -28,7 +28,7 @@ fn main() {
     println!("result-a: {}", task_a);
 
     let task_b = task(read_lines("input/day_23_2.txt"), 4);
-    //assert_eq!(, task_b);
+    assert_eq!(56324, task_b);
     println!("result-b: {}", task_b);
 }
 
@@ -48,11 +48,9 @@ fn task(lines: impl Iterator<Item=String>, room_height: usize) -> usize {
         m.successors(),
           |m| m.heuristic(),
           |m| m.is_goal());
-    //println!("{:?}", result);
-    println!("---------------------");
-    result.as_ref().unwrap().0.iter().for_each(|m| println!("{}", m));
     result.unwrap().1
 }
+
 
 
 type AmphiColor = char;
@@ -211,15 +209,6 @@ impl Map {
             (Occupied(Floor, Amphipod(_, must_enter_room)), Empty(Floor)) if *must_enter_room => false,
             (Occupied(Room(a), _), Empty(Room(b))) if a == b => true,
             (Occupied(Room(_), Amphipod(a, _)), Empty(Room(b))) => {
-                //let deb = format!("{}", self);
-                //let vip =
-                //    deb.contains("▒B▒C▒B▒ ▒" ) &&
-                //    deb.contains("▒D▒C▒B▒A▒");
-                //if vip {
-                //    println!("{:?} -> {:?}", from, to);
-                //    println!("{}s\n{}", self,  a == b && *self.wcc_map.get(b).unwrap().borrow() == 0);
-                //    println!("{:?}", self.wcc_map);
-                //}
                 a == b && *self.wcc_map.get(b).unwrap().borrow() == 0
             },
             (Occupied(_, Amphipod(a, _)), Empty(Room(b))) => {
@@ -283,7 +272,6 @@ impl Map {
                 _ => panic!("unexpected case {:?}", cell)
             })
             .flat_map(|(amphi_color, from)| {
-                //println!("\n--from {:?}----\n{}\n", from, self);
                 self.visit_reachable_from(&from).iter()
                     .map(|(_, to, steps)| {
                         let mut successor = self.clone();
