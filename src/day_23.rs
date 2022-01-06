@@ -23,11 +23,16 @@ use crate::Occupant::{Amphipod, Wall};
 mod lib;
 
 fn main() {
-    let task_a = task_a(read_lines("input/day_23.txt"));
-    println!("result-a: {}", task_a);
+    //let task_a = task(read_lines("../input/day_23_1.txt"));
+    //assert_eq!(15322, task_a);
+    //println!("result-a: {}", task_a);
+
+    let task_b = task(read_lines("../input/day_23_2.txt"));
+    //assert_eq!(, task_b);
+    println!("result-b: {}", task_b);
 }
 
-fn task_a(lines: impl Iterator<Item=String>) -> usize {
+fn task(lines: impl Iterator<Item=String>) -> usize {
     let energy_map = HashMap::from([
         ('A', 1),('B', 10),('C', 100),('D', 1000),
     ]);
@@ -37,7 +42,7 @@ fn task_a(lines: impl Iterator<Item=String>) -> usize {
         m.successors(),
           |m| m.heuristic(),
           |m| m.is_goal());
-    println!("{:?}", result);
+    //println!("{:?}", result);
     result.unwrap().1
 }
 
